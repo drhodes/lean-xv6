@@ -1,0 +1,48 @@
+<page title="OS Structure & Kernel Overview">
+    <h1>OS Structure & Kernel Overview</h1>
+    
+    <h2 data-timestamp="5:44">Introduction to OS Structure</h2>
+    <p>Operating systems have evolved with a set of fundamental design
+    principles that define their structure. These principles help
+    ensure efficiency, security, and compatibility across applications
+    and hardware.</p>
+    
+    <h2 data-timestamp="6:04">Layered OS Architecture</h2>
+    <p>OS design follows a layered model, which can be visualized as:</p>
+    <ul>
+        <li><strong>Hardware Layer:</strong> Physical components such as CPU, RAM, disk, and network interfaces.</li>
+        <li><strong>Kernel Layer:</strong> The core component that manages system resources and provides essential services.</li>
+        <li><strong>User Space:</strong> Applications and utilities running on top of the kernel.</li>
+    </ul>
+    
+    <h2 data-timestamp="7:16">The Role of the Kernel</h2>
+    <p>The kernel is the fundamental component of an OS, responsible for:</p>
+    <ul>
+        <li>Process management: Creating and scheduling processes.</li>
+        <li>Memory management: Allocating memory to processes.</li>
+        <li>File system management: Handling data storage and retrieval.</li>
+        <li>Device management: Interfacing with hardware like disks and networks.</li>
+    </ul>
+    
+    <h2 data-timestamp="8:24">Key Kernel Services</h2>
+    <p>The kernel provides several core services to applications:</p>
+    <ul>
+        <li><strong>Process Management:</strong> Controls execution of processes, multitasking, and scheduling.</li>
+        <li><strong>Memory Management:</strong> Allocates and protects memory for different processes.</li>
+        <li><strong>File System:</strong> Organizes, reads, and writes files on storage devices.</li>
+        <li><strong>Access Control & Security:</strong> Enforces permissions and process isolation.</li>
+    </ul>
+    
+    <h2 data-timestamp="10:01">User-Kernel Separation</h2>
+    <p>Modern operating systems enforce a separation between user space and kernel space:</p>
+    <ul>
+        <li><strong>User Space:</strong> Runs applications and interacts with the OS via system calls.</li>
+        <li><strong>Kernel Space:</strong> Executes privileged operations such as hardware access.</li>
+    </ul>
+    <p>System calls like <code>open()</code> and <code>read()</code> allow user programs to request kernel services.</p>
+    
+    <h2 data-timestamp="11:07">Conclusion</h2>
+    <p>The kernel is the backbone of an OS, providing essential
+    services that allow applications to run smoothly. Understanding
+    its structure helps in designing efficient and secure systems.</p>
+</page>
