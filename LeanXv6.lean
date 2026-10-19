@@ -5,3 +5,4 @@ import «LeanXv6».Boot
 import «LeanXv6».MachineConfig
 import «LeanXv6».Trap
 import «LeanXv6».StageW
+import «LeanXv6».Kalloc

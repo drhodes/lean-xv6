@@ -2,6 +2,7 @@ import «LeanXv6».RiscV
 import «LeanXv6».MachineConfig
 import «LeanXv6».Trap
 import «LeanXv6».StageW
+import «LeanXv6».Kalloc
 
 namespace LeanXv6.Boot
 
@@ -9,6 +10,7 @@ open LeanXv6.RiscV
 open LeanXv6.MCL
 open LeanXv6.Trap
 open LeanXv6.StageW
+open LeanXv6.Kalloc
 
 /-!
 # xv6 Boot Code in Lean 4
@@ -18,7 +20,7 @@ Expressed via our monadic RISC-V DSL (`entryPoint`, `function`, `globalData`, `f
 /-- Stage W verified function with argument binding and callee-saved registers -/
 fn kernelAdd (x y) [ra s0] := do
   add s0 x y
-  uartPrint "=== xv6-lean: Stage W Low IR function (kernelAdd) executed successfully! ===\n\n"
+  uartPrint "=== xv6-lean: Stage W Low IR function (kernelAdd) executed successfully! ===\n"
   returnVal s0
 
 -- Main function running in Supervisor mode
@@ -37,6 +39,13 @@ function main := do
   li a0 40
   li a1 2
   callFn kernelAdd [a0, a1]
+
+  -- Initialize physical memory page allocator (Domain II)
+  uartPrint "=== xv6-lean: Initializing physical page allocator (kinit)... ===\n"
+  callFn kinit []
+
+  -- Run in-kernel page allocator test suite
+  callFn testKalloc []
 
   -- Exit cleanly in QEMU test environment
   exitQemu 0
@@ -94,6 +103,11 @@ def bootBlock : AsmM Unit := do
   start.code
   main.code
   kernelAdd.code
+  kfree.code
+  kalloc.code
+  kinit.code
+  testKalloc.code
+  kmem_freelist.code
   kernelvec.code
   kerneltrap.code
   stack0.code
