@@ -3,6 +3,7 @@ import «LeanXv6».StageW
 import «LeanXv6».Kalloc
 import «LeanXv6».Trap
 import «LeanXv6».Proc
+import «LeanXv6».Syscall
 
 namespace LeanXv6.User
 
@@ -11,6 +12,7 @@ open LeanXv6.StageW
 open LeanXv6.Kalloc
 open LeanXv6.Trap
 open LeanXv6.Proc
+open LeanXv6.Syscall
 
 /-!
 # User Mode Transition & Trampoline Subsystem (Milestone 2)
@@ -168,14 +170,20 @@ def trampolineBlock : AsmM Unit := do
 -- ============================================================================
 
 /-- Constructs an Sv39 user page table for process `p`, mapping:
-    - TRAMPOLINE at 0x3ffffff000 -> 0x80010000 (PTE_V | PTE_R | PTE_X)
-    - TRAPFRAME at 0x3fffffe000 -> p->trapframe (PTE_V | PTE_R | PTE_W)
-    - User program at 0x00000000 -> user_code_pa (PTE_V | PTE_R | PTE_W | PTE_X | PTE_U)
+    - TRAMPOLINE at 0x3ffffff000 -> 0x80010000 (PTE_V | PTE_R | PTE_X | PTE_G | PTE_A)
+    - TRAPFRAME at 0x3fffffe000 -> p->trapframe (PTE_V | PTE_R | PTE_W | PTE_A | PTE_D)
+    - User Page 0 at 0x00000000 -> user_code_pa (PTE_V | PTE_R | PTE_X | PTE_U | PTE_A)
+    - User Page 1 at 0x00001000 -> user_stack_pa (PTE_V | PTE_R | PTE_W | PTE_U | PTE_A | PTE_D)
     Returns root L2 table address in a0.
 -/
-fn proc_pagetable (p user_code_pa) [ra s0 s1 s2 s3 s4 s5 s6] := do
+fn proc_pagetable (p user_code_pa user_stack_pa) [ra s0 s1 s2 s3 s4 s5 s6 s7] := do
   mv s0 p
   mv s1 user_code_pa
+  mv s7 user_stack_pa
+
+  -- Record user pages in struct proc
+  sd s1 PROC_OFFSET_USER_CODE_PA s0
+  sd s7 PROC_OFFSET_USER_STACK_PA s0
 
   -- Allocate 5 page table pages:
   -- s2 = L2 root
@@ -247,13 +255,21 @@ fn proc_pagetable (p user_code_pa) [ra s0 s1 s2 s3 s4 s5 s6] := do
   ori  t1 t1 1
   sd   t1 0 s5
 
-  -- 7. Populate L0 low[0] (User Code at VA 0x00000000):
+  -- 7. Populate L0 low[0] (User Code/Rodata at VA 0x00000000):
   -- Physical address user_code_pa
   -- PTE = (user_code_pa >> 12 << 10) | 0x5b (V | R | X | U | A = 91)
   srli t1 s1 12
   slli t1 t1 10
   ori  t1 t1 0x5b
   sd   t1 0 s6
+
+  -- 8. Populate L0 low[1] (User Stack/Data at VA 0x00001000):
+  -- Physical address user_stack_pa
+  -- PTE = (user_stack_pa >> 12 << 10) | 0xd7 (V | R | W | U | A | D = 215)
+  srli t1 s7 12
+  slli t1 t1 10
+  ori  t1 t1 0xd7
+  sd   t1 8 s6
 
   -- Store root table into p->pagetable
   sd s2 PROC_OFFSET_PAGETABLE s0
@@ -327,8 +343,6 @@ fn usertrapret (p) [ra s0 s1 s2] := do
 
 /-- Handles traps and system calls returning from User Mode. -/
 function usertrap := do
-  uartPrint "=== xv6-lean: usertrap: Hardware trap from User Mode fielded successfully! ===\n"
-
   -- Read scause to verify it was an environment call (ecall, scause = 8)
   csrr t0 .scause
   li   t1 8
@@ -340,37 +354,29 @@ function usertrap := do
   ld   s0 0 t0
   ld   s1 PROC_OFFSET_TRAPFRAME s0
 
-  -- Read user argument in a0
-  ld   s2 TF_OFFSET_A0 s1
-  uartPrint "=== xv6-lean: User Mode ecall argument a0: "
-  uartPrintHex s2
-  uartPrint "\n"
-
   -- Advance epc past the 4-byte ecall instruction
   ld   t0 TF_OFFSET_EPC s1
   addi t0 t0 4
   sd   t0 TF_OFFSET_EPC s1
 
-  -- Check if a0 == 99 (test completion sentinel)
-  li   t1 99
+  -- Dispatch system call
+  callFn syscall [s0]
+  -- a0 is 1 if process called SYS_exit, 0 otherwise
   let continueLbl ← freshLabel "continue_user"
-  bne  s2 t1 continueLbl
+  beqz a0 continueLbl
 
-  uartPrint "=== xv6-lean: User Mode test program completed all syscalls successfully! ===\n"
+  uartPrint "=== xv6-lean: User Mode process terminated via SYS_exit! ===\n"
 
   -- Reinstall kernelvec for supervisor traps
   installKernelTrap
 
-  -- Switch back to test caller context
+  -- Switch back to caller context
   la a0 testCtxTarget
   la a1 testCtxOrigin
   call swtch
   infiniteSpin "usertrap_spin"
 
   label continueLbl
-  -- Return syscall value 0 in a0
-  sd zero TF_OFFSET_A0 s1
-
   -- Resume user execution via usertrapret!
   mv a0 s0
   call usertrapret
@@ -405,25 +411,37 @@ fn testUser () [ra s0 s1 s2 s3] := do
   la t0 activeProc
   sd s0 0 t0
 
-  -- 2. Allocate 4KB physical page for user code
+  -- 2. Allocate Page 0 (user code) and Page 1 (user stack)
   callFn kalloc []
   mv s1 a0 -- s1 = user code physical address
 
-  -- 3. Write test user program:
-  --   Word 0 (0x0): li a0, 42  (addi a0, zero, 42 -> 0x02a00513)
-  --   Word 1 (0x4): ecall      (0x00000073)
-  --   Word 2 (0x8): li a0, 99  (addi a0, zero, 99 -> 0x06300513)
-  --   Word 3 (0xc): ecall      (0x00000073)
-  --   Word 4 (0x10): j .       (0x0000006f)
-  li t0 0x0000007302a00513
-  sd t0 0 s1
-  li t0 0x0000007306300513
-  sd t0 8 s1
-  li t0 0x0000006f
-  sd t0 16 s1
+  callFn kalloc []
+  mv s2 a0 -- s2 = user stack physical address
 
-  -- 4. Build user page table mapping TRAMPOLINE, TRAPFRAME, and user code
-  callFn proc_pagetable [s0, s1]
+  -- 3. Write test user program calling SYS_write then SYS_exit:
+  li t0 0x0010051301000893
+  sd t0 0 s1
+  li t0 0x01e0061303000593 -- a2 = 30
+  sd t0 8 s1
+  li t0 0x0020089300000073
+  sd t0 16 s1
+  li t0 0x0000007300000513
+  sd t0 24 s1
+  li t0 0x0000006f
+  sd t0 32 s1
+
+  -- String at offset 48 (0x30): "User Mode SYS_write verified!\n"
+  li t0 0x646f4d2072657355
+  sd t0 48 s1
+  li t0 0x72775f5359532065
+  sd t0 56 s1
+  li t0 0x6972657620657469
+  sd t0 64 s1
+  li t0 0x00000a2164656966
+  sd t0 72 s1
+
+  -- 4. Build user page table mapping TRAMPOLINE, TRAPFRAME, Code (Page 0), and Stack (Page 1)
+  callFn proc_pagetable [s0, s1, s2]
 
   -- 5. Set user entry point: epc = 0x00000000
   ld s2 PROC_OFFSET_TRAPFRAME s0

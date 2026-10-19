@@ -57,8 +57,10 @@ def PROC_OFFSET_KSTACK    : Int := 32   -- uint64 kstack (4KB page address)
 def PROC_OFFSET_SZ        : Int := 40   -- uint64 user memory size
 def PROC_OFFSET_PAGETABLE : Int := 48   -- uint64 user page table pointer
 def PROC_OFFSET_TRAPFRAME : Int := 56   -- uint64 trapframe pointer
-def PROC_OFFSET_CONTEXT   : Int := 64   -- 112 bytes: struct context (ra, sp, s0..s11)
-def PROC_OFFSET_NAME      : Int := 176  -- 16 bytes: process name string
+def PROC_OFFSET_CONTEXT        : Int := 64   -- 112 bytes: struct context (ra, sp, s0..s11)
+def PROC_OFFSET_NAME           : Int := 176  -- 16 bytes: process name string
+def PROC_OFFSET_USER_CODE_PA   : Int := 192  -- uint64 user code physical page address (Page 0)
+def PROC_OFFSET_USER_STACK_PA  : Int := 200  -- uint64 user stack physical page address (Page 1)
 
 /-- Size of a single `struct proc` entry in bytes -/
 def PROC_SIZE : Int := 256
@@ -326,6 +328,22 @@ fn freeproc (p) [ra s0 s1] := do
   sd zero PROC_OFFSET_TRAPFRAME s0
 
   label noTfLbl
+  -- Reclaim user code page if present
+  ld s1 PROC_OFFSET_USER_CODE_PA s0
+  let noCodeLbl ← freshLabel "no_code_page"
+  beqz s1 noCodeLbl
+  callFn kfree [s1]
+  sd zero PROC_OFFSET_USER_CODE_PA s0
+
+  label noCodeLbl
+  -- Reclaim user stack page if present
+  ld s1 PROC_OFFSET_USER_STACK_PA s0
+  let noStackLbl ← freshLabel "no_stack_page"
+  beqz s1 noStackLbl
+  callFn kfree [s1]
+  sd zero PROC_OFFSET_USER_STACK_PA s0
+
+  label noStackLbl
   -- Reset pid = 0
   sd zero PROC_OFFSET_PID s0
   -- Reset state = UNUSED (0)

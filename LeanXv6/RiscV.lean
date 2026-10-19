@@ -167,6 +167,7 @@ inductive Instr where
   -- Pseudo-instructions
   | li    (rd : Reg) (imm : Int)
   | la    (rd : Reg) (sym : String)
+  | lla   (rd : Reg) (sym : String)
   | mv    (rd rs : Reg)
   -- Control Flow
   | j     (label : String)
@@ -224,6 +225,7 @@ def Instr.toString : Instr → String
   | .sb rs offset base   => s!"    sb {rs}, {offset}({base})"
   | .li rd imm           => s!"    li {rd}, {imm}"
   | .la rd sym           => s!"    la {rd}, {sym}"
+  | .lla rd sym          => s!"    lla {rd}, {sym}"
   | .mv rd rs            => s!"    mv {rd}, {rs}"
   | .j label             => s!"    j {label}"
   | .jal rd label        => s!"    jal {rd}, {label}"
@@ -262,6 +264,8 @@ inductive AsmItem where
   | space   (bytes : Nat)
   | quad    (val : UInt64)
   | quadSym (sym : String) (addend : Int := 0)
+  | asciz   (str : String)
+  | raw     (code : String)
   | label   (name : String)
   | instr   (i : Instr)
   | comment (txt : String)
@@ -274,6 +278,8 @@ def AsmItem.toString : AsmItem → String
   | .space bytes     => s!"    .space {bytes}"
   | .quad val        => s!"    .quad {val}"
   | .quadSym sym add => if add == 0 then s!"    .quad {sym}" else s!"    .quad {sym} + {add}"
+  | .asciz str       => s!"    .asciz \"{str}\""
+  | .raw code        => code
   | .label name      => s!"{name}:"
   | .instr i         => Instr.toString i
   | .comment txt     => s!"    # {txt}"
@@ -303,6 +309,8 @@ def globl    (sym : String)  : AsmM Unit := emit (.globl sym)
 def align    (n : Nat)       : AsmM Unit := emit (.align n)
 def space    (bytes : Nat)   : AsmM Unit := emit (.space bytes)
 def label    (name : String) : AsmM Unit := emit (.label name)
+def asciz    (str : String)  : AsmM Unit := emit (.asciz str)
+def emitRaw  (code : String) : AsmM Unit := emit (.raw code)
 def comment  (txt : String)  : AsmM Unit := emit (.comment txt)
 
 -- Shorthand section selectors
@@ -344,6 +352,7 @@ def li    (rd : Reg) (imm : Int) : AsmM Unit := emitInstr (.li rd imm)
 def mv    (rd rs : Reg)             : AsmM Unit := emitInstr (.mv rd rs)
 
 def j     (lbl : String) : AsmM Unit := emitInstr (.j lbl)
+def jal   (rd : Reg) (lbl : String) : AsmM Unit := emitInstr (.jal rd lbl)
 def ret                  : AsmM Unit := emitInstr .ret
 def jalr  (rd rs : Reg) (offset : Int := 0) : AsmM Unit := emitInstr (.jalr rd rs offset)
 def jr    (rs : Reg)     : AsmM Unit := emitInstr (.jalr zero rs 0)
@@ -464,6 +473,9 @@ def call [ToSymbol α] (target : α) : AsmM Unit :=
 
 def la [ToSymbol α] (rd : Reg) (target : α) : AsmM Unit :=
   emitInstr (.la rd (ToSymbol.toSymbol target))
+
+def lla [ToSymbol α] (rd : Reg) (target : α) : AsmM Unit :=
+  emitInstr (.lla rd (ToSymbol.toSymbol target))
 
 -- Combinators
 def functionBlock (name : String) (body : AsmM Unit) (alignment : Nat := 2) : AsmM Unit := do

@@ -5,6 +5,8 @@ import «LeanXv6».StageW
 import «LeanXv6».Kalloc
 import «LeanXv6».Proc
 import «LeanXv6».User
+import «LeanXv6».Syscall
+import «LeanXv6».Shell
 
 namespace LeanXv6.Boot
 
@@ -15,6 +17,8 @@ open LeanXv6.StageW
 open LeanXv6.Kalloc
 open LeanXv6.Proc
 open LeanXv6.User
+open LeanXv6.Syscall
+open LeanXv6.Shell
 
 /-!
 # xv6 Boot Code in Lean 4
@@ -60,6 +64,9 @@ function main := do
 
   -- Run in-kernel User Mode (Ring 3) transition & trampoline verification
   callFn testUser []
+
+  -- Launch Minimal Interactive User Mode Shell (Milestone 4)
+  callFn launchShell []
 
   -- Exit cleanly in QEMU test environment
   exitQemu 0
@@ -137,8 +144,17 @@ def bootBlock : AsmM Unit := do
   proc_pagetable.code
   usertrapret.code
   usertrap.code
+  uartGetc.code
+  uartPutc.code
+  uva2pa.code
+  sys_write.code
+  sys_read.code
+  sys_exit.code
+  syscall.code
   runUserThread.code
   testUser.code
+  launchShell.code
+  shell_image
   trampolineBlock
   kernelvec.code
   kerneltrap.code

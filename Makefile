@@ -9,7 +9,7 @@ CFLAGS = -Wall -Werror -O -fno-omit-frame-pointer -ggdb -gdwarf-2 -march=rv64gc 
 LDFLAGS = -z max-page-size=4096
 QEMUOPTS = -machine virt -bios none -kernel build/kernel.elf -m 128M -smp 1 -nographic
 
-.PHONY: all qemu qemu-verbose qemu-trace qemu-gdb gdb disasm clean FORCE
+.PHONY: all test qemu qemu-verbose qemu-trace qemu-gdb gdb disasm clean FORCE
 
 all: build/kernel.elf build/kernel.asm build/kernel.sym
 
@@ -31,7 +31,11 @@ build/kernel.asm: build/kernel.elf
 build/kernel.sym: build/kernel.elf
 	$(OBJDUMP) -t build/kernel.elf | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > build/kernel.sym
 
-# 1. Normal run
+# 1. Automated test run
+test: build/kernel.elf
+	printf "help\ninfo\necho Shell automated test passed\nexit\n" | $(QEMU) $(QEMUOPTS)
+
+# 2. Interactive run
 qemu: build/kernel.elf
 	$(QEMU) $(QEMUOPTS)
 
