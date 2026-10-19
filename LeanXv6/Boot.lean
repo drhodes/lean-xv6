@@ -3,6 +3,7 @@ import «LeanXv6».MachineConfig
 import «LeanXv6».Trap
 import «LeanXv6».StageW
 import «LeanXv6».Kalloc
+import «LeanXv6».Proc
 
 namespace LeanXv6.Boot
 
@@ -11,6 +12,7 @@ open LeanXv6.MCL
 open LeanXv6.Trap
 open LeanXv6.StageW
 open LeanXv6.Kalloc
+open LeanXv6.Proc
 
 /-!
 # xv6 Boot Code in Lean 4
@@ -46,6 +48,13 @@ function main := do
 
   -- Run in-kernel page allocator test suite
   callFn testKalloc []
+
+  -- Initialize process table and allocate kernel stacks (Domain II)
+  uartPrint "=== xv6-lean: Initializing process table and kernel stacks (procinit)... ===\n"
+  callFn procinit []
+
+  -- Run in-kernel process subsystem and context switch verification
+  callFn testProc []
 
   -- Exit cleanly in QEMU test environment
   exitQemu 0
@@ -108,6 +117,14 @@ def bootBlock : AsmM Unit := do
   kinit.code
   testKalloc.code
   kmem_freelist.code
+  procinit.code
+  swtch.code
+  coroutineTestEntry.code
+  testProc.code
+  procTable.code
+  nextPid.code
+  testCtxOrigin.code
+  testCtxTarget.code
   kernelvec.code
   kerneltrap.code
   stack0.code
