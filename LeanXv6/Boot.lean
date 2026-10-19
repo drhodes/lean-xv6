@@ -119,6 +119,9 @@ def bootBlock : AsmM Unit := do
   kmem_freelist.code
   procinit.code
   swtch.code
+  forkret.code
+  allocproc.code
+  freeproc.code
   coroutineTestEntry.code
   testProc.code
   procTable.code

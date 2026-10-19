@@ -47,3 +47,36 @@ class CoroutineContextSwitchTestFeat(Feat):
     initializes an auxiliary execution context with a dedicated stack, switches
     execution into a test coroutine via swtch, and switches back to resume the caller.
     '''
+
+class TrapframeLayoutFeat(Feat):
+    '''The user trapframe structure shall be a dedicated 4096-byte page containing
+    the process's kernel execution context (kernel_satp, kernel_sp, kernel_trap,
+    epc, kernel_hartid) followed by the 31 saved user-mode general registers.
+    '''
+
+class AllocProcFeat(Feat):
+    '''The process allocation routine (allocproc) shall search the process table for
+    an UNUSED entry, allocate a unique process identifier (PID), set the state to
+    USED, allocate a 4KB trapframe page via kalloc, configure context.ra to point to
+    forkret and context.sp to kstack + 4096, and return the process pointer.
+    '''
+
+class FreeProcFeat(Feat):
+    '''The process reclamation routine (freeproc) shall release the allocated
+    trapframe page back to the physical page allocator via kfree, reset process
+    accounting fields, and transition the process state back to UNUSED.
+    '''
+
+class ForkRetFeat(Feat):
+    '''The initial process return trampoline (forkret) shall serve as the target
+    entry point for newly scheduled processes, verifying stack execution context
+    before proceeding to user-mode return.
+    '''
+
+class AllocProcVerificationFeat(Feat):
+    '''The process subsystem shall include an in-kernel verification test that
+    allocates a process using allocproc, verifies that PID, state, kstack, and
+    trapframe are cleanly initialized, context switches into forkret, and frees
+    the process via freeproc.
+    '''
+
