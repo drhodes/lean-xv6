@@ -124,7 +124,7 @@ def Section.toDirective : Section → String
   | .rodata     => ".section .rodata"
   | .data       => ".section .data"
   | .bss        => ".section .bss"
-  | .trampoline => ".section trampsec"
+  | .trampoline => ".section trampsec, \"ax\""
   | .custom s   => s!".section {s}"
 
 def Section.isExecutable : Section → Bool
@@ -345,6 +345,8 @@ def mv    (rd rs : Reg)             : AsmM Unit := emitInstr (.mv rd rs)
 
 def j     (lbl : String) : AsmM Unit := emitInstr (.j lbl)
 def ret                  : AsmM Unit := emitInstr .ret
+def jalr  (rd rs : Reg) (offset : Int := 0) : AsmM Unit := emitInstr (.jalr rd rs offset)
+def jr    (rs : Reg)     : AsmM Unit := emitInstr (.jalr zero rs 0)
 def beq   (rs1 rs2 : Reg) (lbl : String) : AsmM Unit := emitInstr (.beq rs1 rs2 lbl)
 def bne   (rs1 rs2 : Reg) (lbl : String) : AsmM Unit := emitInstr (.bne rs1 rs2 lbl)
 def beqz  (rs : Reg) (lbl : String)      : AsmM Unit := emitInstr (.beqz rs lbl)

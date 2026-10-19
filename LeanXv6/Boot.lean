@@ -4,6 +4,7 @@ import «LeanXv6».Trap
 import «LeanXv6».StageW
 import «LeanXv6».Kalloc
 import «LeanXv6».Proc
+import «LeanXv6».User
 
 namespace LeanXv6.Boot
 
@@ -13,6 +14,7 @@ open LeanXv6.Trap
 open LeanXv6.StageW
 open LeanXv6.Kalloc
 open LeanXv6.Proc
+open LeanXv6.User
 
 /-!
 # xv6 Boot Code in Lean 4
@@ -55,6 +57,9 @@ function main := do
 
   -- Run in-kernel process subsystem and context switch verification
   callFn testProc []
+
+  -- Run in-kernel User Mode (Ring 3) transition & trampoline verification
+  callFn testUser []
 
   -- Exit cleanly in QEMU test environment
   exitQemu 0
@@ -128,6 +133,13 @@ def bootBlock : AsmM Unit := do
   nextPid.code
   testCtxOrigin.code
   testCtxTarget.code
+  activeProc.code
+  proc_pagetable.code
+  usertrapret.code
+  usertrap.code
+  runUserThread.code
+  testUser.code
+  trampolineBlock
   kernelvec.code
   kerneltrap.code
   stack0.code

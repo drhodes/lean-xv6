@@ -127,7 +127,7 @@ def qemuVirtConfig : MachineConfig := {
     { name := "ram_pool", va := 0x80200000, pa := 0x80200000, size := 0x7e00000, perms := .rw },
 
     -- 7. Trampoline: 0x3ffffff000 -> _trampoline (4KB, RX, No Write)
-    { name := "trampoline", va := 0x3ffffff000, pa := 0x80001000, size := 0x1000, perms := .rx }
+    { name := "trampoline", va := 0x3ffffff000, pa := 0x80010000, size := 0x1000, perms := .rx }
   ]
 }
 
@@ -240,7 +240,7 @@ def linkPageTable (parent : String) (idx : Nat) (child : String) : AsmM Unit := 
 def virtPageTableLinks : List (String × Nat × String) := [
   ("boot_l2",     0,   "boot_l1_0"),
   ("boot_l2",     2,   "boot_l1_2"),
-  ("boot_l2",     511, "boot_l1_511"),
+  ("boot_l2",     255, "boot_l1_511"),
   ("boot_l1_0",   0,   "boot_l0_low"),
   ("boot_l1_0",   128, "boot_l0_mmio"),
   ("boot_l1_511", 511, "boot_l0_tramp")

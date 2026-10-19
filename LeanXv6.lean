@@ -7,3 +7,4 @@ import «LeanXv6».Trap
 import «LeanXv6».StageW
 import «LeanXv6».Kalloc
 import «LeanXv6».Proc
+import «LeanXv6».User

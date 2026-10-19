@@ -12,11 +12,14 @@ SECTIONS
   .text : {
     *(.text._entry)
     *(.text .text.*)
-    . = ALIGN(0x1000);
-    _trampoline = .;
-    *(trampsec)
-    . = ALIGN(0x1000);
     PROVIDE(etext = .);
+  }
+
+  . = 0x80010000;
+
+  trampsec : {
+    PROVIDE(_trampoline = .);
+    *(trampsec .trampsec)
   }
 
   . = ALIGN(0x200000);
