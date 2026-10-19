@@ -1,0 +1,4 @@
+title: "lean-xv6"
+description: "From Zero to User-Mode Shell: Building a Formally Specified xv6 in Lean 4"
+theme: jekyll-theme-primer
+markdown: kramdown
