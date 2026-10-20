@@ -459,20 +459,44 @@ When the user types `exit`, the shell invokes `SYS_exit(0)`. The kernel intercep
 
 ---
 
+# Part 6: Multi-Process Scheduling & The Dynamic Lifecycle
+
+Following the minimal shell, we implemented canonical Unix process lifecycle operations directly from MIT xv6's `proc.c`:
+
+1. **`SYS_fork` (Syscall 1)**: Duplicates parent Page 0 and Page 1, copies the trapframe with child `a0 = 0`, sets `child->parent = parent`, marks child `RUNNABLE`, and returns child PID to parent.
+2. **`SYS_wait` (Syscall 3)**: Parent waits for child to become `ZOMBIE`, writes child exit status to user memory, reclaims child via `freeproc()`, and returns child PID.
+3. **`SYS_getpid` (Syscall 11)**: Returns current process PID.
+4. **Round-Robin CPU `scheduler()`**: Scans `procTable[64]`, selects `RUNNABLE` threads, and context switches via `swtch(&kernelCpuContext, &p->context)`.
+
+```text
+xv6$ getpid
+Current process PID: 3
+xv6$ fork
+[Parent] Initiating SYS_fork...
+[Parent] Created child process PID: 4
+[Child] Running in isolated User Mode! PID: 4. Exiting with status 42...
+[Parent] Reaped child process PID: 4, exit status: 42
+xv6$ exit
+Exiting shell. Goodbye!
+```
+
+---
+
 # Verification Metrics & Architectural Summary
 
 | Layer | Implementation Component | Formal Guarantees |
 |---|---|---|
 | **Paging** | Machine Configuration Language (MCL) | Strict $W \oplus X$, Kernel Isolation, 4KB Alignment |
 | **Memory** | Physical Page Allocator (`kalloc`/`kfree`) | 0x88000000 boundary guard, zero-scrubbing |
-| **Concurrency** | Process Table (`procTable`, `swtch`) | 16-byte stack alignment, callee-saved preservation |
+| **Concurrency** | Process Table (`procTable`, `swtch`, `scheduler`) | 16-byte stack alignment, round-robin dispatch |
 | **Privilege** | Trampoline Page (`uservec`/`userret`) | Atomic register exchange via `sscratch`, user isolation |
+| **Lifecycle** | Multi-Process Syscalls (`fork`, `wait`, `exit`) | Differential PID returns, parent-child reclamation |
 | **I/O & Shell** | Syscalls & Interactive User Shell (`sh`) | Ring 3 user mode execution, memory-safe translation |
 
 ### Specifications Compliance (`libspec`)
 
 ```text
-Specification (HEAD (Live Spec)) Components (94 total across 11 modules):
+Specification (HEAD (Live Spec)) Components (101 total across 12 modules):
   • spec.app: 8 components (Boot, Build, ELF Separation)
   • spec.mcl: 15 components (Paging, Encoding, W⊕X Proofs)
   • spec.trust: 5 components (PMP, Delegation, UART)
@@ -484,12 +508,13 @@ Specification (HEAD (Live Spec)) Components (94 total across 11 modules):
   • spec.proc: 11 components (procTable, Context Switch, ForkRet)
   • spec.user: 6 components (Trampoline, Privilege Drop, Trap Return)
   • spec.shell: 7 components (Syscalls, Drivers, Interactive Shell)
+  • spec.lifecycle: 7 components (fork, wait, getpid, scheduler, yield)
 ```
 
 ### Roadmap to v1.0.0
-With the User Mode interactive shell operational, our next milestones include:
+With multi-process scheduling, `fork`, `wait`, and the User Mode interactive shell operational, our next milestones include:
 1. **VirtIO Disk Driver & Buffer Cache (`bcache`)**.
 2. **Crash-Resilient Logging & Inode Filesystem**.
-3. **Dynamic Process Forking (`SYS_fork`, `SYS_wait`) & ELF Executable Loading (`SYS_exec`)**.
+3. **ELF Executable Loading (`SYS_exec`)**.
 
 *The complete codebase, specifications, and proofs are available in the repository root.*

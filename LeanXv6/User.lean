@@ -365,10 +365,22 @@ function usertrap := do
   let continueLbl ← freshLabel "continue_user"
   beqz a0 continueLbl
 
-  uartPrint "=== xv6-lean: User Mode process terminated via SYS_exit! ===\n"
-
   -- Reinstall kernelvec for supervisor traps
   installKernelTrap
+
+  -- Check if process has a parent (i.e. child process spawned via fork)
+  ld t0 PROC_OFFSET_PARENT s0
+  let isRootProcLbl ← freshLabel "root_proc_exit"
+  beqz t0 isRootProcLbl
+
+  -- Child process: switch back to scheduler!
+  addi a0 s0 PROC_OFFSET_CONTEXT
+  la a1 kernelCpuContext
+  call swtch
+  infiniteSpin "child_exit_spin"
+
+  label isRootProcLbl
+  uartPrint "=== xv6-lean: User Mode process terminated via SYS_exit! ===\n"
 
   -- Switch back to caller context
   la a0 testCtxTarget

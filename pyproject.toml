@@ -1,6 +1,6 @@
 [project]
 name = "lean-xv6"
-version = "0.7.0"
+version = "0.8.0"
 description = "MIT xv6-riscv operating system specified and implemented in Lean 4"
 readme = "README.md"
 requires-python = ">=3.13"

@@ -140,6 +140,9 @@ def bootBlock : AsmM Unit := do
   nextPid.code
   testCtxOrigin.code
   testCtxTarget.code
+  kernelCpuContext.code
+  scheduler.code
+  yieldProcess.code
   activeProc.code
   proc_pagetable.code
   usertrapret.code
@@ -147,6 +150,9 @@ def bootBlock : AsmM Unit := do
   uartGetc.code
   uartPutc.code
   uva2pa.code
+  sys_fork.code
+  sys_wait.code
+  sys_getpid.code
   sys_write.code
   sys_read.code
   sys_exit.code

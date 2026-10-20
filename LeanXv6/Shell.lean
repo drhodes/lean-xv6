@@ -96,6 +96,18 @@ def shell_image : AsmM Unit := do
   jal ra "strcmp"
   beqz a0 "do_exit"
 
+  -- Command: getpid
+  li a0 0x1000
+  lla a1 "cmd_getpid"
+  jal ra "strcmp"
+  beqz a0 "do_getpid"
+
+  -- Command: fork
+  li a0 0x1000
+  lla a1 "cmd_fork"
+  jal ra "strcmp"
+  beqz a0 "do_fork"
+
   -- Command: echo
   li t0 0x1000
   lb t1 0 t0 -- 'e' (101)
@@ -149,6 +161,68 @@ def shell_image : AsmM Unit := do
   ecall
   label "shell_spin"
   j "shell_spin"
+
+  label "do_getpid"
+  lla a0 "pid_prefix"
+  jal ra "print_str"
+  li a7 SYS_getpid
+  ecall
+  jal ra "print_int"
+  lla a0 "newline_str"
+  jal ra "print_str"
+  j "shell_loop"
+
+  label "do_fork"
+  lla a0 "fork_start_msg"
+  jal ra "print_str"
+
+  li a7 SYS_fork
+  ecall
+
+  -- Check if child (a0 == 0) or parent (a0 > 0)
+  beqz a0 "fork_child_branch"
+
+  -- Parent process:
+  mv s0 a0 -- s0 = child_pid
+  lla a0 "fork_parent_msg"
+  jal ra "print_str"
+  mv a0 s0
+  jal ra "print_int"
+  lla a0 "newline_str"
+  jal ra "print_str"
+
+  -- Parent calls SYS_wait(&status at 0x1080)
+  li a0 0x1080
+  li a7 SYS_wait
+  ecall
+  mv s1 a0 -- s1 = reaped child PID
+
+  lla a0 "wait_success_msg"
+  jal ra "print_str"
+  mv a0 s1
+  jal ra "print_int"
+  lla a0 "wait_status_msg"
+  jal ra "print_str"
+  li t0 0x1080
+  ld a0 0 t0
+  jal ra "print_int"
+  lla a0 "newline_str"
+  jal ra "print_str"
+  j "shell_loop"
+
+  label "fork_child_branch"
+  lla a0 "fork_child_msg"
+  jal ra "print_str"
+  li a7 SYS_getpid
+  ecall
+  jal ra "print_int"
+  lla a0 "fork_child_exit_msg"
+  jal ra "print_str"
+  li a0 42
+  li a7 SYS_exit
+  ecall
+  label "child_spin"
+  j "child_spin"
 
   label "do_unknown"
   lla a0 "unknown_prefix"
@@ -207,6 +281,44 @@ def shell_image : AsmM Unit := do
   li a0 0
   ret
 
+  -- Recursively prints positive integer in a0 to stdout
+  label "print_int"
+  addi sp sp (-16)
+  sd ra 8 sp
+  sd a0 0 sp
+  li t0 10
+  let singleDigitLbl ← freshLabel "single_digit"
+  let divLoopLbl ← freshLabel "div_loop"
+  let divDoneLbl ← freshLabel "div_done"
+  blt a0 t0 singleDigitLbl
+
+  -- a0 >= 10: divide by 10 in a loop
+  li t1 0
+  label divLoopLbl
+  blt a0 t0 divDoneLbl
+  addi a0 a0 (-10)
+  addi t1 t1 1
+  j divLoopLbl
+
+  label divDoneLbl
+  -- t1 = quotient, a0 = remainder
+  sd a0 0 sp -- save remainder
+  mv a0 t1   -- recurse on quotient
+  jal ra "print_int"
+  ld a0 0 sp -- restore remainder
+
+  label singleDigitLbl
+  addi a0 a0 48 -- '0'
+  sb a0 0 sp
+  mv a1 sp
+  li a0 1
+  li a2 1
+  li a7 SYS_write
+  ecall
+  ld ra 8 sp
+  addi sp sp 16
+  ret
+
   -- ========================================================================
   -- Shell String Constants (Stored in Page 0 Rodata)
   -- ========================================================================
@@ -229,8 +341,35 @@ def shell_image : AsmM Unit := do
   label "cmd_exit"
   asciz "exit"
 
+  label "cmd_getpid"
+  asciz "getpid"
+
+  label "cmd_fork"
+  asciz "fork"
+
   label "help_msg"
-  asciz "xv6-lean Shell Builtin Commands:\\n  help        - Display this help message\\n  info        - Display system architecture and memory status\\n  echo <text> - Print arguments to standard output\\n  clear       - Clear the terminal screen\\n  exit        - Terminate shell and cleanly return to kernel\\n"
+  asciz "xv6-lean Shell Builtin Commands:\\n  help        - Display this help message\\n  info        - Display system architecture and memory status\\n  echo <text> - Print arguments to standard output\\n  getpid      - Display process ID of current process\\n  fork        - Spawn child process, execute, and wait for exit\\n  clear       - Clear the terminal screen\\n  exit        - Terminate shell and cleanly return to kernel\\n"
+
+  label "pid_prefix"
+  asciz "Current process PID: "
+
+  label "fork_start_msg"
+  asciz "[Parent] Initiating SYS_fork...\\n"
+
+  label "fork_parent_msg"
+  asciz "[Parent] Created child process PID: "
+
+  label "wait_success_msg"
+  asciz "[Parent] Reaped child process PID: "
+
+  label "wait_status_msg"
+  asciz ", exit status: "
+
+  label "fork_child_msg"
+  asciz "[Child] Running in isolated User Mode! PID: "
+
+  label "fork_child_exit_msg"
+  asciz ". Exiting with status 42...\\n"
 
   label "info_msg"
   asciz "System Architecture Information:\\n  OS: xv6-lean (Formally Typed MIT xv6 in Lean 4)\\n  Target: RISC-V RV64GC (QEMU virt)\\n  Execution Mode: Ring 3 User Mode (U-mode)\\n  Paging: Sv39 3-level page tables with W^X enforcement\\n  Syscalls: SYS_exit (2), SYS_read (5), SYS_write (16)\\n"
@@ -306,9 +445,13 @@ fn launchShell () [ra s0 s1 s2 s3 s4 s5] := do
   li t1 0x1ff0
   sd t1 TF_OFFSET_SP t0 -- sp := 0x00001ff0 (Page 1 top stack)
 
-  -- 6. Switch execution into runUserThread -> usertrapret -> User Mode (Ring 3)
+  -- 6. Mark process as RUNNABLE for scheduler
+  li t0 PROC_STATE_RUNNABLE
+  sd t0 PROC_OFFSET_STATE s0
+
+  -- 7. Switch execution into scheduler running on kernel stack
   la s3 testCtxTarget
-  la t0 runUserThread
+  la t0 scheduler
   sd t0 0 s3
   sd sp 8 s3
 

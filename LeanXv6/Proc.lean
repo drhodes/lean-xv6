@@ -61,6 +61,8 @@ def PROC_OFFSET_CONTEXT        : Int := 64   -- 112 bytes: struct context (ra, s
 def PROC_OFFSET_NAME           : Int := 176  -- 16 bytes: process name string
 def PROC_OFFSET_USER_CODE_PA   : Int := 192  -- uint64 user code physical page address (Page 0)
 def PROC_OFFSET_USER_STACK_PA  : Int := 200  -- uint64 user stack physical page address (Page 1)
+def PROC_OFFSET_PARENT         : Int := 208  -- uint64 struct proc *parent
+def PROC_OFFSET_CHAN           : Int := 216  -- uint64 sleep/wait channel
 
 /-- Size of a single `struct proc` entry in bytes -/
 def PROC_SIZE : Int := 256
@@ -121,6 +123,11 @@ globalData testCtxOrigin := do
   space 112
 
 globalData testCtxTarget := do
+  align 4
+  space 112
+
+/-- Saved kernel CPU scheduler execution context (ra, sp, s0..s11) -/
+globalData kernelCpuContext := do
   align 4
   space 112
 
@@ -221,6 +228,16 @@ fn procinit () [ra s0 s1 s2 s3] := do
     Called when swtch switches into p->context.
 -/
 function forkret := do
+  la t0 "activeProc"
+  ld a0 0 t0
+  let isTestLbl ← freshLabel "forkret_test"
+  beqz a0 isTestLbl
+
+  -- Active process scheduled: drop CPU privilege to User Mode!
+  call "usertrapret"
+  infiniteSpin "forkret_spin"
+
+  label isTestLbl
   uartPrint "=== xv6-lean: forkret reached! Process 1 running on newly allocated kstack! ===\n"
 
   -- Read stack pointer to confirm it runs on Process 1 kstack
@@ -234,7 +251,7 @@ function forkret := do
   la a1 testCtxOrigin
   call swtch
 
-  infiniteSpin "forkret_spin"
+  infiniteSpin "forkret_test_spin"
 
 /-- Allocates an UNUSED process slot, assigns a PID, allocates a trapframe page,
     and initializes context for execution with context.ra = forkret.
@@ -271,9 +288,13 @@ fn allocproc () [ra s0 s1 s2 s3] := do
   addi t1 t1 1
   sd t1 0 t0
 
-  -- 2. Mark state as USED (1)
+  -- 2. Mark state as USED (1) and clear parent/accounting
   li t0 PROC_STATE_USED
   sd t0 PROC_OFFSET_STATE s0
+  sd zero PROC_OFFSET_PARENT s0
+  sd zero PROC_OFFSET_XSTATE s0
+  sd zero PROC_OFFSET_KILLED s0
+  sd zero PROC_OFFSET_CHAN s0
 
   -- 3. Allocate 4KB trapframe page via kalloc()
   callFn kalloc []
@@ -346,8 +367,73 @@ fn freeproc (p) [ra s0 s1] := do
   label noStackLbl
   -- Reset pid = 0
   sd zero PROC_OFFSET_PID s0
+  sd zero PROC_OFFSET_PARENT s0
+  sd zero PROC_OFFSET_XSTATE s0
+  sd zero PROC_OFFSET_KILLED s0
+  sd zero PROC_OFFSET_CHAN s0
   -- Reset state = UNUSED (0)
   sd zero PROC_OFFSET_STATE s0
+
+-- ============================================================================
+-- 5. CPU Process Scheduler (scheduler & yieldProcess)
+-- ============================================================================
+
+/-- Round-robin process scheduler.
+    Continuously loops over procTable dispatching RUNNABLE processes.
+-/
+fn scheduler () [ra s0 s1 s2 s3] := do
+  let schedLoopLbl ← freshLabel "sched_loop"
+  label schedLoopLbl
+
+  la s0 procTable
+  li s1 0           -- index = 0
+  li s2 NPROC       -- 64
+  li s3 PROC_SIZE   -- 256
+
+  let procLoopLbl ← freshLabel "sched_proc_loop"
+  let nextProcLbl ← freshLabel "sched_next_proc"
+
+  label procLoopLbl
+  bge s1 s2 schedLoopLbl
+
+  -- Check if state == RUNNABLE (3)
+  ld t0 PROC_OFFSET_STATE s0
+  li t1 PROC_STATE_RUNNABLE
+  bne t0 t1 nextProcLbl
+
+  -- Set state = RUNNING (4)
+  li t0 PROC_STATE_RUNNING
+  sd t0 PROC_OFFSET_STATE s0
+
+  -- Set activeProc = s0
+  la t0 "activeProc"
+  sd s0 0 t0
+
+  -- Context switch: swtch(&kernelCpuContext, &s0->context)
+  la a0 kernelCpuContext
+  addi a1 s0 PROC_OFFSET_CONTEXT
+  call swtch
+
+  -- Returned to scheduler! Clear activeProc
+  la t0 "activeProc"
+  sd zero 0 t0
+
+  label nextProcLbl
+  add s0 s0 s3
+  addi s1 s1 1
+  j procLoopLbl
+
+/-- Cooperatively yields CPU from current process back to scheduler -/
+fn yieldProcess (p) [ra s0] := do
+  mv s0 p
+  -- Set state = RUNNABLE (3)
+  li t0 PROC_STATE_RUNNABLE
+  sd t0 PROC_OFFSET_STATE s0
+
+  -- swtch(&p->context, &kernelCpuContext)
+  addi a0 s0 PROC_OFFSET_CONTEXT
+  la a1 kernelCpuContext
+  call swtch
 
 -- ============================================================================
 -- 6. In-Kernel Process Subsystem Verification (testProc)

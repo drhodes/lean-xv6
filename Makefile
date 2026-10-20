@@ -33,7 +33,7 @@ build/kernel.sym: build/kernel.elf
 
 # 1. Automated test run
 test: build/kernel.elf
-	printf "help\ninfo\necho Shell automated test passed\nexit\n" | $(QEMU) $(QEMUOPTS)
+	printf "help\ninfo\ngetpid\nfork\necho Shell automated test passed\nexit\n" | $(QEMU) $(QEMUOPTS)
 
 # 2. Interactive run
 qemu: build/kernel.elf

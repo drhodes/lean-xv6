@@ -604,6 +604,24 @@ Exiting shell. Goodbye!
 === xv6-lean: Shell process cleanly reclaimed. Kernel execution finished! ===</code></pre>
 <p>When the user types <code>exit</code>, the shell invokes <code>SYS_exit(0)</code>. The kernel intercepts the environment call, transitions the process to <code>ZOMBIE</code>, restores the supervisor trap vector, context-switches back to kernel <code>main</code>, and invokes <code>freeproc</code> to reclaim the user physical pages and process slot.</p>
 <hr/>
+<h1 class="post-title">Part 6: Multi-Process Scheduling & The Dynamic Lifecycle</h1>
+<p>Following the minimal shell, we implemented canonical Unix process lifecycle operations directly from MIT xv6's <code>proc.c</code>:</p>
+<ol>
+<li><strong><code>SYS_fork</code> (Syscall 1)</strong>: Duplicates parent Page 0 and Page 1, copies the trapframe with child <code>a0 = 0</code>, sets <code>child-&gt;parent = parent</code>, marks child <code>RUNNABLE</code>, and returns child PID to parent.</li>
+<li><strong><code>SYS_wait</code> (Syscall 3)</strong>: Parent waits for child to become <code>ZOMBIE</code>, writes child exit status to user memory, reclaims child via <code>freeproc()</code>, and returns child PID.</li>
+<li><strong><code>SYS_getpid</code> (Syscall 11)</strong>: Returns current process PID.</li>
+<li><strong>Round-Robin CPU <code>scheduler()</code></strong>: Scans <code>procTable[64]</code>, selects <code>RUNNABLE</code> threads, and context switches via <code>swtch(&amp;kernelCpuContext, &amp;p-&gt;context)</code>.</li>
+</ol>
+<pre><code class="language-text">xv6$ getpid
+Current process PID: 3
+xv6$ fork
+[Parent] Initiating SYS_fork...
+[Parent] Created child process PID: 4
+[Child] Running in isolated User Mode! PID: 4. Exiting with status 42...
+[Parent] Reaped child process PID: 4, exit status: 42
+xv6$ exit
+Exiting shell. Goodbye!</code></pre>
+<hr/>
 <h1 class="post-title">Verification Metrics & Architectural Summary</h1>
 <div class="table-container"><table>
 <tr>
@@ -623,13 +641,18 @@ Exiting shell. Goodbye!
 </tr>
 <tr>
 <td><strong>Concurrency</strong></td>
-<td>Process Table (<code>procTable</code>, <code>swtch</code>)</td>
-<td>16-byte stack alignment, callee-saved preservation</td>
+<td>Process Table (<code>procTable</code>, <code>swtch</code>, <code>scheduler</code>)</td>
+<td>16-byte stack alignment, round-robin dispatch</td>
 </tr>
 <tr>
 <td><strong>Privilege</strong></td>
 <td>Trampoline Page (<code>uservec</code>/<code>userret</code>)</td>
 <td>Atomic register exchange via <code>sscratch</code>, user isolation</td>
+</tr>
+<tr>
+<td><strong>Lifecycle</strong></td>
+<td>Multi-Process Syscalls (<code>fork</code>, <code>wait</code>, <code>exit</code>)</td>
+<td>Differential PID returns, parent-child reclamation</td>
 </tr>
 <tr>
 <td><strong>I/O & Shell</strong></td>
@@ -638,7 +661,7 @@ Exiting shell. Goodbye!
 </tr>
 </table></div>
 <h3 id="specifications-compliance-libspec">Specifications Compliance (<code>libspec</code>)</h3>
-<pre><code class="language-text">Specification (HEAD (Live Spec)) Components (94 total across 11 modules):
+<pre><code class="language-text">Specification (HEAD (Live Spec)) Components (101 total across 12 modules):
   • spec.app: 8 components (Boot, Build, ELF Separation)
   • spec.mcl: 15 components (Paging, Encoding, W⊕X Proofs)
   • spec.trust: 5 components (PMP, Delegation, UART)
@@ -649,13 +672,14 @@ Exiting shell. Goodbye!
   • spec.kalloc: 8 components (Freelist, Scrubbing, Bounds)
   • spec.proc: 11 components (procTable, Context Switch, ForkRet)
   • spec.user: 6 components (Trampoline, Privilege Drop, Trap Return)
-  • spec.shell: 7 components (Syscalls, Drivers, Interactive Shell)</code></pre>
+  • spec.shell: 7 components (Syscalls, Drivers, Interactive Shell)
+  • spec.lifecycle: 7 components (fork, wait, getpid, scheduler, yield)</code></pre>
 <h3 id="roadmap-to-v1-0-0">Roadmap to v1.0.0</h3>
-<p>With the User Mode interactive shell operational, our next milestones include:</p>
+<p>With multi-process scheduling, <code>fork</code>, <code>wait</code>, and the User Mode interactive shell operational, our next milestones include:</p>
 <ol>
 <li><strong>VirtIO Disk Driver & Buffer Cache (<code>bcache</code>)</strong>.</li>
 <li><strong>Crash-Resilient Logging & Inode Filesystem</strong>.</li>
-<li><strong>Dynamic Process Forking (<code>SYS_fork</code>, <code>SYS_wait</code>) & ELF Executable Loading (<code>SYS_exec</code>)</strong>.</li>
+<li><strong>ELF Executable Loading (<code>SYS_exec</code>)</strong>.</li>
 </ol>
 <p>*The complete codebase, specifications, and proofs are available in the repository root.*</p>
 

@@ -24,9 +24,13 @@ Provides standard POSIX-like system calls for User Mode (Ring 3):
 -- 1. System Call Numbers (Standard xv6-riscv ABI)
 -- ============================================================================
 
-def SYS_exit  : Int := 2
-def SYS_read  : Int := 5
-def SYS_write : Int := 16
+def SYS_fork   : Int := 1
+def SYS_exit   : Int := 2
+def SYS_wait   : Int := 3
+def SYS_read   : Int := 5
+def SYS_kill   : Int := 6
+def SYS_getpid : Int := 11
+def SYS_write  : Int := 16
 
 -- ============================================================================
 -- 2. Console UART Device Drivers (Polled RX & TX)
@@ -185,6 +189,201 @@ fn sys_read (p fd uva max_len) [ra s0 s1 s2 s3 s4 s5] := do
   label endLbl
   returnVal s5
 
+/-- sys_fork(p)
+    Creates a new child process duplicating the parent's user memory and trapframe.
+    Returns child PID in parent, and 0 in child.
+-/
+fn sys_fork (p) [ra s0 s1 s2 s3 s4 s5] := do
+  mv s0 p -- s0 = parent struct proc*
+
+  -- 1. Allocate child process slot
+  callFn allocproc []
+  let forkFailLbl ← freshLabel "fork_fail"
+  beqz a0 forkFailLbl
+  mv s1 a0 -- s1 = child struct proc* (np)
+
+  -- 2. Allocate child Page 0 (Code/Rodata) and Page 1 (Stack/Data)
+  callFn kalloc []
+  let forkFailChildLbl ← freshLabel "fork_fail_child"
+  beqz a0 forkFailChildLbl
+  mv s2 a0 -- s2 = child code PA
+
+  callFn kalloc []
+  let forkFailCodeLbl ← freshLabel "fork_fail_code"
+  beqz a0 forkFailCodeLbl
+  mv s3 a0 -- s3 = child stack PA
+
+  -- 3. Copy Page 0 from parent to child (512 quad words = 4096 bytes)
+  ld s4 PROC_OFFSET_USER_CODE_PA s0
+  mv s5 s2 -- child destination
+  li t0 512
+  let copyP0Lbl ← freshLabel "fork_copy_p0"
+  let copyP0DoneLbl ← freshLabel "fork_copy_p0_done"
+  label copyP0Lbl
+  beqz t0 copyP0DoneLbl
+  ld t1 0 s4
+  sd t1 0 s5
+  addi s4 s4 8
+  addi s5 s5 8
+  addi t0 t0 (-1)
+  j copyP0Lbl
+  label copyP0DoneLbl
+
+  -- 4. Copy Page 1 from parent to child (512 quad words = 4096 bytes)
+  ld s4 PROC_OFFSET_USER_STACK_PA s0
+  mv s5 s3 -- child destination
+  li t0 512
+  let copyP1Lbl ← freshLabel "fork_copy_p1"
+  let copyP1DoneLbl ← freshLabel "fork_copy_p1_done"
+  label copyP1Lbl
+  beqz t0 copyP1DoneLbl
+  ld t1 0 s4
+  sd t1 0 s5
+  addi s4 s4 8
+  addi s5 s5 8
+  addi t0 t0 (-1)
+  j copyP1Lbl
+  label copyP1DoneLbl
+
+  -- 5. Build child Sv39 user page table
+  callFn "proc_pagetable" [s1, s2, s3]
+
+  -- 6. Copy trapframe from parent to child (36 quad words = 288 bytes)
+  ld s4 PROC_OFFSET_TRAPFRAME s0
+  ld s5 PROC_OFFSET_TRAPFRAME s1
+  li t0 36
+  let copyTfLbl ← freshLabel "fork_copy_tf"
+  let copyTfDoneLbl ← freshLabel "fork_copy_tf_done"
+  label copyTfLbl
+  beqz t0 copyTfDoneLbl
+  ld t1 0 s4
+  sd t1 0 s5
+  addi s4 s4 8
+  addi s5 s5 8
+  addi t0 t0 (-1)
+  j copyTfLbl
+  label copyTfDoneLbl
+
+  -- 7. In child's trapframe, set return value a0 = 0!
+  ld s5 PROC_OFFSET_TRAPFRAME s1
+  sd zero TF_OFFSET_A0 s5
+
+  -- 8. Set parent-child relationship: child->parent = parent
+  sd s0 PROC_OFFSET_PARENT s1
+
+  -- 9. Mark child state as RUNNABLE (3)
+  li t0 PROC_STATE_RUNNABLE
+  sd t0 PROC_OFFSET_STATE s1
+
+  -- 10. Parent returns child PID
+  ld a0 PROC_OFFSET_PID s1
+  returnVal a0
+  let forkDoneLbl ← freshLabel "fork_done"
+  j forkDoneLbl
+
+  label forkFailCodeLbl
+  callFn kfree [s2]
+  label forkFailChildLbl
+  callFn freeproc [s1]
+  label forkFailLbl
+  li a0 (-1)
+  returnVal a0
+
+  label forkDoneLbl
+
+/-- sys_wait(p, uva_status)
+    Scans procTable for children of p.
+    If a child is ZOMBIE, extracts exit code, reclaims child via freeproc,
+    and returns child PID.
+    If no children exist, returns -1.
+    If children exist but are still running, cooperatively yields to scheduler.
+-/
+fn sys_wait (p uva_status) [ra s0 s1 s2 s3 s4 s5 s6] := do
+  mv s0 p
+  mv s1 uva_status
+
+  let waitRetryLbl ← freshLabel "wait_retry"
+  label waitRetryLbl
+
+  la s2 procTable  -- s2 = procTable scan pointer
+  li s3 0          -- s3 = index counter (0..63)
+  li s4 0          -- s4 = have_kids flag
+  li s5 NPROC      -- 64
+  li s6 PROC_SIZE  -- 256
+
+  let scanLoopLbl ← freshLabel "wait_scan_loop"
+  let nextProcLbl ← freshLabel "wait_next_proc"
+  let checkKidsLbl ← freshLabel "wait_check_kids"
+  let waitDoneLbl ← freshLabel "wait_done"
+
+  label scanLoopLbl
+  bge s3 s5 checkKidsLbl
+
+  -- Check if slot is not UNUSED
+  ld t0 PROC_OFFSET_STATE s2
+  beqz t0 nextProcLbl
+
+  -- Check if this process's parent is s0
+  ld t1 PROC_OFFSET_PARENT s2
+  bne t1 s0 nextProcLbl
+
+  -- Child found! Set have_kids = 1
+  li s4 1
+
+  -- Check if child state == ZOMBIE (5)
+  li t2 PROC_STATE_ZOMBIE
+  bne t0 t2 nextProcLbl
+
+  -- Found a ZOMBIE child!
+  -- Read child PID
+  ld s3 PROC_OFFSET_PID s2 -- s3 = child PID
+
+  -- If uva_status != 0, write child exit status to user memory
+  let skipStatusLbl ← freshLabel "wait_skip_status"
+  beqz s1 skipStatusLbl
+  callFn uva2pa [s0, s1]
+  -- a0 is physical address of status in kernel space
+  ld t3 PROC_OFFSET_XSTATE s2
+  sd t3 0 a0
+  label skipStatusLbl
+
+  -- Reclaim child process resources
+  callFn freeproc [s2]
+
+  -- Return child PID in a0!
+  returnVal s3
+  j waitDoneLbl
+
+  label nextProcLbl
+  add s2 s2 s6
+  addi s3 s3 1
+  j scanLoopLbl
+
+  label checkKidsLbl
+  -- If have_kids == 0: no children! Return -1
+  let hasKidsLbl ← freshLabel "wait_has_kids"
+  bnez s4 hasKidsLbl
+  li a0 (-1)
+  returnVal a0
+  j waitDoneLbl
+
+  label hasKidsLbl
+  -- Children exist but none are ZOMBIE yet!
+  -- Yield CPU to scheduler:
+  callFn yieldProcess [s0]
+
+  -- Resumed by scheduler! Loop back and re-scan!
+  j waitRetryLbl
+
+  label waitDoneLbl
+
+/-- sys_getpid(p)
+    Returns current process PID.
+-/
+fn sys_getpid (p) := do
+  ld a0 PROC_OFFSET_PID p
+  returnVal a0
+
 /-- sys_exit(p, status)
     Marks process state as ZOMBIE and records exit status code. -/
 fn sys_exit (p status) [ra s0 s1] := do
@@ -205,34 +404,28 @@ fn syscall (p) [ra s0 s1 s2 s3 s4 s5] := do
   mv s0 p
   ld s1 PROC_OFFSET_TRAPFRAME s0
   ld s2 TF_OFFSET_A7 s1 -- syscall number in a7
-  ld s3 TF_OFFSET_A0 s1 -- arg 0 (fd / status)
-  ld s4 TF_OFFSET_A1 s1 -- arg 1 (uva)
-  ld s5 TF_OFFSET_A2 s1 -- arg 2 (count / max_len)
+  ld s3 TF_OFFSET_A0 s1 -- arg 0
+  ld s4 TF_OFFSET_A1 s1 -- arg 1
+  ld s5 TF_OFFSET_A2 s1 -- arg 2
 
+  let notForkLbl ← freshLabel "not_fork"
+  let notWaitLbl ← freshLabel "not_wait"
   let notReadLbl ← freshLabel "not_read"
   let notWriteLbl ← freshLabel "not_write"
   let notExitLbl ← freshLabel "not_exit"
+  let notGetpidLbl ← freshLabel "not_getpid"
   let doneLbl ← freshLabel "syscall_done"
 
-  -- 1. SYS_write (16)
-  li t0 SYS_write
-  bne s2 t0 notWriteLbl
-  callFn sys_write [s0, s3, s4, s5]
+  -- 1. SYS_fork (1)
+  li t0 SYS_fork
+  bne s2 t0 notForkLbl
+  callFn sys_fork [s0]
   sd a0 TF_OFFSET_A0 s1 -- store return value in trapframe->a0
   returnImm 0
   j doneLbl
 
-  label notWriteLbl
-  -- 2. SYS_read (5)
-  li t0 SYS_read
-  bne s2 t0 notReadLbl
-  callFn sys_read [s0, s3, s4, s5]
-  sd a0 TF_OFFSET_A0 s1 -- store return value in trapframe->a0
-  returnImm 0
-  j doneLbl
-
-  label notReadLbl
-  -- 3. SYS_exit (2)
+  label notForkLbl
+  -- 2. SYS_exit (2)
   li t0 SYS_exit
   bne s2 t0 notExitLbl
   callFn sys_exit [s0, s3]
@@ -241,6 +434,42 @@ fn syscall (p) [ra s0 s1 s2 s3 s4 s5] := do
   j doneLbl
 
   label notExitLbl
+  -- 3. SYS_wait (3)
+  li t0 SYS_wait
+  bne s2 t0 notWaitLbl
+  callFn sys_wait [s0, s3]
+  sd a0 TF_OFFSET_A0 s1
+  returnImm 0
+  j doneLbl
+
+  label notWaitLbl
+  -- 4. SYS_read (5)
+  li t0 SYS_read
+  bne s2 t0 notReadLbl
+  callFn sys_read [s0, s3, s4, s5]
+  sd a0 TF_OFFSET_A0 s1
+  returnImm 0
+  j doneLbl
+
+  label notReadLbl
+  -- 5. SYS_getpid (11)
+  li t0 SYS_getpid
+  bne s2 t0 notGetpidLbl
+  callFn sys_getpid [s0]
+  sd a0 TF_OFFSET_A0 s1
+  returnImm 0
+  j doneLbl
+
+  label notGetpidLbl
+  -- 6. SYS_write (16)
+  li t0 SYS_write
+  bne s2 t0 notWriteLbl
+  callFn sys_write [s0, s3, s4, s5]
+  sd a0 TF_OFFSET_A0 s1
+  returnImm 0
+  j doneLbl
+
+  label notWriteLbl
   -- Unknown syscall
   uartPrint "KERNEL WARNING: Unknown syscall number: "
   uartPrintHex s2
